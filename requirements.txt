@@ -1,0 +1,25 @@
+# 运行本项目所需的依赖（Python 3.10+，推荐 3.11 / 3.12）
+# 安装：pip install -r requirements.txt
+# 国内加速：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# --- Web 界面 ---
+streamlit>=1.40
+
+# --- 文档解析 ---
+pypdf>=4.0            # PDF 解析兜底方案
+pymupdf>=1.24         # PDF 解析首选方案（速度快、保留分页）
+python-docx>=1.1      # Word 文档解析
+
+# --- 向量库 ---
+chromadb>=0.5         # 持久化向量库（cosine 距离）
+
+# --- 向量化（BGE） ---
+sentence-transformers>=3.0
+torch>=2.2            # Windows / Linux 上 PyPI 默认安装 CPU 版本
+
+# --- 大模型调用（OpenAI 兼容协议，DeepSeek / OpenAI 均可） ---
+openai>=1.40
+python-dotenv>=1.0
+
+# --- 可选：把切片换成 LlamaIndex 的实现时再装（默认流程不依赖） ---
+# llama-index-core>=0.11
