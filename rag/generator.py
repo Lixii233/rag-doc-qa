@@ -62,6 +62,26 @@ def build_messages(question: str, hits: list[Chunk], history: list[tuple[str, st
     return messages
 
 
+GENERAL_PROMPT = (
+    "你是「校园 / 个人文档智能问答助手」，也可以像通用 AI 助手一样回答与文档无关的问题。\n"
+    "必须遵守：\n"
+    "1. 当前问题在知识库里没有找到依据，回答时不要编造学校制度、数字、流程等具体事实。\n"
+    "2. 闲聊或常识问题直接简明作答。\n"
+    "3. 如果问题其实需要查资料（问学校规定、报销标准之类），提醒用户换个更具体的说法或补充文档。\n"
+    "4. 回答用中文，简洁，默认不超过 200 字。"
+)
+
+
+def build_general_messages(question: str, history: list[tuple[str, str]] | None = None) -> list[dict]:
+    """无文档依据时的提示词：允许通用作答，但禁止编造具体事实。"""
+    messages: list[dict] = [{"role": "system", "content": GENERAL_PROMPT}]
+    for prev_q, prev_a in (history or [])[-3:]:
+        messages.append({"role": "user", "content": prev_q})
+        messages.append({"role": "assistant", "content": prev_a[:400]})
+    messages.append({"role": "user", "content": question})
+    return messages
+
+
 # --------------------------------------------------------------------------- 大模型客户端
 class LLMClient:
     """OpenAI 协议兼容的流式客户端（DeepSeek / OpenAI / 本地 vLLM 均可）。"""
@@ -324,6 +344,17 @@ class AnswerGenerator:
 
         if result.route == Route.GENERAL:
             yield from _fake_stream("资料中没有直接依据，以下回答基于通用知识，仅供参考：\n\n")
+            if not self.llm.available:
+                yield from _fake_stream(
+                    "（当前未配置大模型 API Key，暂时只能回答知识库内的问题；"
+                    "配置 Key 后可以像通用助手一样作答。）"
+                )
+                return
+            try:
+                yield from self.llm.stream(build_general_messages(question, history))
+            except Exception as exc:  # noqa: BLE001 - 通用作答失败不影响页面
+                yield f"\n\n[调用大模型失败：{type(exc).__name__}: {exc}]"
+            return
 
         if not self.llm.available or not result.hits:
             yield from _fake_stream(extractive_answer(question, result.hits, embedder=self.embedder))
