@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import asdict, dataclass
@@ -13,6 +14,7 @@ from typing import Callable
 from .config import Settings, load_settings
 from .embeddings import BaseEmbedder, get_embedder
 from .generator import AnswerGenerator
+from .intent import is_smalltalk
 from .loader import load_directory, load_document
 from .retriever import Retriever
 from .schemas import Answer, Chunk, Doc, Route, SearchResult
@@ -33,6 +35,11 @@ class IndexMeta:
     count: int
     updated_at: str
     collection: str
+
+
+def _hybrid_enabled() -> bool:
+    """HYBRID_GENERAL=0 可关闭「查不到就交给大模型通用作答」的兜底。"""
+    return os.environ.get("HYBRID_GENERAL", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 def _noop(message: str, ratio: float) -> None:  # pragma: no cover - 默认回调
@@ -157,6 +164,36 @@ class RAGPipeline:
     def search(self, question: str, top_k: int | None = None, threshold: float | None = None) -> SearchResult:
         return self.retriever.search(question, top_k=top_k, threshold=threshold)
 
+    def _prepare(
+        self,
+        question: str,
+        top_k: int | None = None,
+        threshold: float | None = None,
+    ) -> SearchResult:
+        """混合模式的前置分流：寒暄不检索；查不到且模型可用时改走通用作答。"""
+        limit = self.settings.similarity_threshold if threshold is None else threshold
+        if is_smalltalk(question):
+            return SearchResult(
+                query=question,
+                hits=[],
+                candidates=[],
+                route=Route.GENERAL,
+                reason="寒暄 / 能力介绍类问题，跳过检索，直接通用作答",
+                threshold=limit,
+            )
+
+        result = self.search(question, top_k=top_k, threshold=threshold)
+        if result.route == Route.REFUSE and _hybrid_enabled() and self.generator.llm.available:
+            return SearchResult(
+                query=result.query,
+                hits=[],
+                candidates=result.candidates,
+                route=Route.GENERAL,
+                reason="知识库无相关内容，混合模式改由大模型按通用知识作答（无文档依据）",
+                threshold=result.threshold,
+            )
+        return result
+
     def ask(
         self,
         question: str,
@@ -164,7 +201,7 @@ class RAGPipeline:
         threshold: float | None = None,
         history: list[tuple[str, str]] | None = None,
     ) -> Answer:
-        result = self.search(question, top_k=top_k, threshold=threshold)
+        result = self._prepare(question, top_k=top_k, threshold=threshold)
         text = "".join(self.generator.stream_answer(question, result, history, self.store.sources()))
         return Answer(
             question=question,
@@ -182,7 +219,7 @@ class RAGPipeline:
         history: list[tuple[str, str]] | None = None,
     ) -> Iterator[dict]:
         """事件流：retrieval → token* → done，方便 UI / CLI 逐步渲染。"""
-        result = self.search(question, top_k=top_k, threshold=threshold)
+        result = self._prepare(question, top_k=top_k, threshold=threshold)
         yield {"type": "retrieval", "result": result}
 
         collected: list[str] = []
@@ -209,7 +246,7 @@ class RAGPipeline:
         history: list[tuple[str, str]] | None = None,
     ) -> AsyncIterator[dict]:
         """异步版本：检索在函数里同步完成（很快），生成走异步流。"""
-        result = self.search(question, top_k=top_k, threshold=threshold)
+        result = self._prepare(question, top_k=top_k, threshold=threshold)
         yield {"type": "retrieval", "result": result}
 
         collected: list[str] = []
