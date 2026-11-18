@@ -15,6 +15,13 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]  # 项目根目录
 load_dotenv(ROOT / ".env")
 
+try:
+    import streamlit as st
+
+    for _k, _v in st.secrets.items():
+        os.environ.setdefault(str(_k), str(_v))
+except Exception:
+    pass
 
 def _env_str(key: str, default: str) -> str:
     value = os.getenv(key)
