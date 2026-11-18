@@ -15,13 +15,16 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]  # 项目根目录
 load_dotenv(ROOT / ".env")
 
-try:
+# Streamlit Cloud 上不会带 .env 文件，密钥写在 App 的 Secrets 里（TOML 格式）。
+# 这里把 st.secrets 桥接进环境变量，使本地和云端用同一套读取逻辑。
+try:  # pragma: no cover - 仅在有 Streamlit 运行环境时生效
     import streamlit as st
 
     for _k, _v in st.secrets.items():
         os.environ.setdefault(str(_k), str(_v))
-except Exception:
+except Exception:  # 本地 CLI / 无 Streamlit 时静默跳过
     pass
+
 
 def _env_str(key: str, default: str) -> str:
     value = os.getenv(key)
